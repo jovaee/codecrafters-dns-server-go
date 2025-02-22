@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -12,7 +13,8 @@ import (
 
 type DNSMessage struct {
 	Data      []byte
-	labelsEnd int
+	QLabelEnd int
+	ALabelEnd int
 }
 
 func New(d []byte) DNSMessage {
@@ -21,6 +23,9 @@ func New(d []byte) DNSMessage {
 	}
 }
 
+// --
+// Header
+// --
 func (m *DNSMessage) GetID() uint16 {
 	return binary.BigEndian.Uint16(m.Data[:2])
 }
@@ -57,64 +62,132 @@ func (m *DNSMessage) SetANCount(v uint16) {
 	binary.BigEndian.PutUint16(m.Data[6:8], v)
 }
 
+// --
+// Question
+// --
 func (m *DNSMessage) GetQName() string {
-	var sb strings.Builder
-
-	p := 12
-	for m.Data[p] != 0x00 {
-		l := int(m.Data[p]) // How many bytes in this label?
-		p += 1              // Move on from length byte
-
-		// Get each char in the label
-		for i := 0; i < l; i++ {
-			sb.WriteByte(m.Data[p])
-			p += 1
-		}
-
-		if m.Data[p] != 0x00 {
-			sb.WriteByte('.')
-		}
-	}
-
-	return sb.String()
+	v, _ := readName(m.Data, 12)
+	return v
 }
 
 func (m *DNSMessage) SetQName(v string) {
-	sts := strings.Split(v, ".")
-
-	p := 12
-	for _, st := range sts {
-		// Set length of label
-		m.Data[p] = byte(len(st))
-		p += 1
-
-		// Write each of the chars for the label
-		for _, c := range st {
-			m.Data[p] = byte(c)
-			p += 1
-		}
-	}
-
-	m.Data[p] = 0x00    // Null terminator
-	m.labelsEnd = p + 1 // Move past the null terminator
+	i := setName(m.Data, 12, v)
+	m.QLabelEnd = i
 }
 
 func (m *DNSMessage) GetQType() uint16 {
-	return binary.BigEndian.Uint16(m.Data[m.labelsEnd : m.labelsEnd+2])
+	return binary.BigEndian.Uint16(m.Data[m.QLabelEnd : m.QLabelEnd+2])
 
 }
 
 func (m *DNSMessage) SetQType(v uint16) {
-	binary.BigEndian.PutUint16(m.Data[m.labelsEnd:m.labelsEnd+2], v)
+	binary.BigEndian.PutUint16(m.Data[m.QLabelEnd:m.QLabelEnd+2], v)
 }
 
 func (m *DNSMessage) GetQClass() uint16 {
-	return binary.BigEndian.Uint16(m.Data[m.labelsEnd+2 : m.labelsEnd+4])
+	return binary.BigEndian.Uint16(m.Data[m.QLabelEnd+2 : m.QLabelEnd+4])
 
 }
 
 func (m *DNSMessage) SetQClass(v uint16) {
-	binary.BigEndian.PutUint16(m.Data[m.labelsEnd+2:m.labelsEnd+4], v)
+	binary.BigEndian.PutUint16(m.Data[m.QLabelEnd+2:m.QLabelEnd+4], v)
+}
+
+// --
+// Answer
+// --
+func (m *DNSMessage) GetAName() string {
+	v, _ := readName(m.Data, m.QLabelEnd+4)
+	return v
+}
+
+func (m *DNSMessage) SetAName(v string) {
+	i := setName(m.Data, m.QLabelEnd+4, v)
+	m.ALabelEnd = i
+}
+
+func (m *DNSMessage) GetAType() uint16 {
+	return binary.BigEndian.Uint16(m.Data[m.ALabelEnd : m.ALabelEnd+2])
+
+}
+
+func (m *DNSMessage) SetAType(v uint16) {
+	binary.BigEndian.PutUint16(m.Data[m.ALabelEnd:m.ALabelEnd+2], v)
+}
+
+func (m *DNSMessage) GetAClass() uint16 {
+	return binary.BigEndian.Uint16(m.Data[m.ALabelEnd+2 : m.ALabelEnd+4])
+
+}
+
+func (m *DNSMessage) SetAClass(v uint16) {
+	binary.BigEndian.PutUint16(m.Data[m.ALabelEnd+2:m.ALabelEnd+4], v)
+}
+
+func (m *DNSMessage) SetTTL(v uint32) {
+	binary.BigEndian.PutUint32(m.Data[m.ALabelEnd+4:m.ALabelEnd+8], v)
+}
+
+func (m *DNSMessage) SetRDataLength(v uint16) {
+	binary.BigEndian.PutUint16(m.Data[m.ALabelEnd+8:m.ALabelEnd+10], v)
+}
+
+func (m *DNSMessage) SetRData(ip string) {
+	// Can also do
+	// v := net.ParseIP(ip).To4()
+	// binary.BigEndian.PutUint32(m.Data[m.ALabelEnd+10:m.ALabelEnd+14], binary.BigEndian.Uint32(v))
+	net.ParseIP(ip).To4()
+	parts := strings.Split(ip, ".")
+
+	var v []byte = make([]byte, 4)
+	for i, part := range parts {
+		num, _ := strconv.Atoi(part)
+		v[i] = byte(num)
+	}
+
+	binary.BigEndian.PutUint32(m.Data[m.ALabelEnd+10:m.ALabelEnd+14], binary.BigEndian.Uint32(v))
+}
+
+func readName(data []byte, sp int) (string, int) {
+	var sb strings.Builder
+
+	p := sp
+	for data[p] != 0x00 {
+		l := int(data[p]) // How many bytes in this label?
+		p += 1            // Move on from length byte
+
+		// Get each char in the label
+		for i := 0; i < l; i++ {
+			sb.WriteByte(data[p])
+			p += 1
+		}
+
+		if data[p] != 0x00 {
+			sb.WriteByte('.')
+		}
+	}
+
+	return sb.String(), p
+}
+
+func setName(data []byte, sp int, name string) int {
+	sts := strings.Split(name, ".")
+
+	p := sp
+	for _, st := range sts {
+		// Set length of label
+		data[p] = byte(len(st))
+		p += 1
+
+		// Write each of the chars for the label
+		for _, c := range st {
+			data[p] = byte(c)
+			p += 1
+		}
+	}
+
+	data[p] = 0x00 // Null terminator
+	return p + 1
 }
 
 func main() {
@@ -151,9 +224,18 @@ func main() {
 		response.SetQDCount(1)          // Number of questions in the query
 		response.SetANCount(1)          // Number of answers in the response
 
+		// Assumes only one question
 		response.SetQName(request.GetQName()) // Domain name
 		response.SetQType(1)                  // A
 		response.SetQClass(1)
+
+		// Assumes only one answer
+		response.SetAName(request.GetQName())
+		response.SetAType(1)  // A
+		response.SetAClass(1) // IN
+		response.SetTTL(60)
+		response.SetRDataLength(4)
+		response.SetRData("8.8.8.8") // Google DNS IP address
 
 		fmt.Printf("RedID: %v\n", request.GetID())
 		fmt.Printf("ResID: %v\n", response.GetID())
