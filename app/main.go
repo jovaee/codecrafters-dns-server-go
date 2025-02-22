@@ -1,9 +1,43 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 )
+
+// | ID (16 bits) | QR (1 bit) | OpCode (4 bits) | AA (1 bit) | TC (1 bit) | RD (1 bit) | RA (1 bit) | Z (3 bits) | RCode (4 bits) |
+// |---0---|---1--|-----------------------------2---------------------------------------|------------------3-----------------------|
+
+type DNSMessage struct {
+	Data []byte
+}
+
+func New(d []byte) DNSMessage {
+	return DNSMessage{
+		Data: d,
+	}
+}
+
+func (m *DNSMessage) GetID() uint16 {
+	return binary.BigEndian.Uint16(m.Data[:2])
+}
+
+func (d *DNSMessage) SetID(v uint16) {
+	binary.BigEndian.PutUint16(d.Data[:2], v)
+}
+
+func (d *DNSMessage) GetQR() uint8 {
+	return (d.Data[2] & 0x80) >> 7
+}
+
+func (d *DNSMessage) SetQR(v bool) {
+	if v {
+		d.Data[2] |= 0x80
+	} else {
+		d.Data[2] &= 0x7F
+	}
+}
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -31,11 +65,20 @@ func main() {
 			break
 		}
 
-		receivedData := string(buf[:size])
-		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
+		msg := New(buf[:size])
+
+		msg.SetID(1234)
+		msg.SetQR(true)
+
+		// fmt.Printf("Byte:  %08b\n", msg.Data[2])
+		// fmt.Printf("ID: %v\n", msg.GetID())
+		// fmt.Printf("QR: %v\n", msg.GetQR())
+
+		// receivedData := string(buf[:size])
+		// fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
 
 		// Create an empty response
-		response := []byte{}
+		response := msg.Data
 
 		_, err = udpConn.WriteToUDP(response, source)
 		if err != nil {
